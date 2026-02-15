@@ -9,9 +9,14 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.database import Base
-from app.models import User, OAuthToken, AuditLog  # noqa: F401
+from app.core.config import settings
+from app.models import User, OAuthToken, AuditLog, Trip, TripSegment, TripDocument  # noqa: F401
 
 config = context.config
+
+# Override sqlalchemy.url from environment/settings (so Docker works)
+config.set_main_option("sqlalchemy.url", settings.database_url_sync)
+
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

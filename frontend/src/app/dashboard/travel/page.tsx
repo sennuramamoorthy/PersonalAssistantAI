@@ -20,7 +20,8 @@ import {
 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
 import { apiFetch } from "@/lib/api";
-import type { Trip, TripsResponse, TripSegment } from "@/types/travel";
+import { Mail } from "lucide-react";
+import type { Trip, TripsResponse, TripSegment, TravelSuggestion, ScanEmailsResponse } from "@/types/travel";
 
 const SEGMENT_ICONS: Record<string, typeof Plane> = {
   flight: Plane,
@@ -49,6 +50,12 @@ export default function TravelPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [conflicts, setConflicts] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Email scan state
+  const [suggestions, setSuggestions] = useState<TravelSuggestion[]>([]);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [scanResult, setScanResult] = useState<{ scanned: number; found: number } | null>(null);
+  const [approving, setApproving] = useState<string | null>(null);
 
   // Create form state
   const [newTrip, setNewTrip] = useState({
@@ -256,6 +263,47 @@ export default function TravelPage() {
     }
   }
 
+  async function handleScanEmails() {
+    if (!accessToken) return;
+    setScanLoading(true);
+    setSuggestions([]);
+    setScanResult(null);
+    try {
+      const data = await apiFetch<ScanEmailsResponse>("/api/travel/scan-emails", {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({ page_size: 30 }),
+      });
+      setSuggestions(data.suggestions);
+      setScanResult({ scanned: data.emails_scanned, found: data.travel_found });
+    } catch {
+      // ignore
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
+  async function handleApproveSuggestion(suggestion: TravelSuggestion) {
+    if (!accessToken) return;
+    setApproving(suggestion.email_id);
+    try {
+      const trip = await apiFetch<Trip>("/api/travel/approve-suggestion", {
+        method: "POST",
+        token: accessToken,
+        body: JSON.stringify({ suggestion }),
+      });
+      setTrips((prev) => [trip, ...prev]);
+      setSuggestions((prev) => prev.filter((s) => s.email_id !== suggestion.email_id));
+      setSelectedTrip(trip);
+      setAiSummary(null);
+      setConflicts(null);
+    } catch {
+      // ignore
+    } finally {
+      setApproving(null);
+    }
+  }
+
   function formatDate(dateStr: string) {
     try {
       return new Date(dateStr).toLocaleDateString("en-US", {
@@ -291,13 +339,27 @@ export default function TravelPage() {
             Manage your travel itineraries and documents
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateForm(true)}
-          className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"
-        >
-          <Plus className="h-4 w-4" />
-          New Trip
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleScanEmails}
+            disabled={scanLoading}
+            className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
+          >
+            {scanLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Mail className="h-4 w-4" />
+            )}
+            Scan Emails for Travel
+          </button>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"
+          >
+            <Plus className="h-4 w-4" />
+            New Trip
+          </button>
+        </div>
       </div>
 
       {/* Filter Tabs */}
@@ -316,6 +378,93 @@ export default function TravelPage() {
           </button>
         ))}
       </div>
+
+      {/* Scan Results Banner */}
+      {scanResult && suggestions.length === 0 && !scanLoading && (
+        <div className="rounded-lg bg-[var(--accent)] p-3 text-sm text-[var(--muted-foreground)]">
+          Scanned {scanResult.scanned} emails — no travel bookings detected.
+        </div>
+      )}
+
+      {/* Travel Suggestions from Email */}
+      {suggestions.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-4">
+          <h3 className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-amber-500" />
+            Travel Detected in Emails ({suggestions.length})
+            {scanResult && (
+              <span className="text-xs font-normal text-[var(--muted-foreground)]">
+                — scanned {scanResult.scanned} emails
+              </span>
+            )}
+          </h3>
+          <div className="mt-3 space-y-3">
+            {suggestions.map((s) => {
+              const SegIcon = SEGMENT_ICONS[s.segments[0]?.segment_type] || Plane;
+              return (
+                <div
+                  key={s.email_id}
+                  className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+                        <SegIcon className="h-4.5 w-4.5 text-amber-700 dark:text-amber-300" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm text-[var(--foreground)]">
+                          {s.trip_title}
+                        </p>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          <MapPin className="inline h-3 w-3 mr-0.5" />
+                          {s.destination} &middot; {formatDate(s.start_date)} — {formatDate(s.end_date)}
+                        </p>
+                        <p className="text-xs text-[var(--muted-foreground)] mt-1">
+                          From: {s.email_from} &middot; {s.email_subject}
+                        </p>
+                        {s.segments.length > 0 && (
+                          <p className="text-xs text-[var(--muted-foreground)] mt-1">
+                            {s.segments.length} segment{s.segments.length !== 1 ? "s" : ""}:{" "}
+                            {s.segments.map((seg) => seg.title).join(", ")}
+                          </p>
+                        )}
+                        {s.action_type === "add_to_existing" && s.existing_trip_title && (
+                          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+                            Will add to existing trip: {s.existing_trip_title}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handleApproveSuggestion(s)}
+                        disabled={approving === s.email_id}
+                        className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                      >
+                        {approving === s.email_id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          "Approve"
+                        )}
+                      </button>
+                      <button
+                        onClick={() =>
+                          setSuggestions((prev) =>
+                            prev.filter((x) => x.email_id !== s.email_id)
+                          )
+                        }
+                        className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-foreground)] hover:bg-[var(--accent)] transition-colors"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Trip List */}

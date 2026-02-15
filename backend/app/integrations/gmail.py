@@ -87,7 +87,18 @@ class GmailClient:
                 headers=self.headers,
                 **kwargs,
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                # Include Google's error details for better debugging
+                try:
+                    error_body = response.json()
+                    error_msg = error_body.get("error", {}).get("message", response.text)
+                except Exception:
+                    error_msg = response.text
+                raise httpx.HTTPStatusError(
+                    f"Gmail API {response.status_code}: {error_msg}",
+                    request=response.request,
+                    response=response,
+                )
             return response.json()
 
     async def list_messages(

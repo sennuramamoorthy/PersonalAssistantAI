@@ -20,6 +20,8 @@ from app.services.travel_service import (
     block_calendar_for_trip,
     check_travel_conflicts,
     ai_travel_summary,
+    scan_emails_for_travel,
+    approve_travel_suggestion,
     TravelServiceError,
 )
 
@@ -273,3 +275,67 @@ async def api_trip_summary(
         return {"trip_id": trip_id, "summary": summary}
     except TravelServiceError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# --- Email Scanning ---
+
+class ScanEmailsRequest(BaseModel):
+    query: str = ""
+    page_size: int = 30
+
+
+class TravelSuggestionSegment(BaseModel):
+    segment_type: str
+    title: str
+    start_time: str = ""
+    end_time: str = ""
+    location_from: str = ""
+    location_to: str = ""
+    confirmation_number: str = ""
+    carrier: str = ""
+    cost: float | None = None
+    currency: str = "USD"
+
+
+class TravelSuggestion(BaseModel):
+    email_id: str
+    email_provider: str
+    email_subject: str = ""
+    email_from: str = ""
+    email_date: str = ""
+    trip_title: str
+    destination: str
+    start_date: str
+    end_date: str
+    segments: list[TravelSuggestionSegment] = []
+    action_type: str = "new_trip"
+    existing_trip_id: str | None = None
+    existing_trip_title: str | None = None
+    notes: str = ""
+
+
+class ApproveSuggestionRequest(BaseModel):
+    suggestion: TravelSuggestion
+
+
+@router.post("/scan-emails")
+async def api_scan_emails(
+    body: ScanEmailsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan recent emails for travel-related content and return suggestions."""
+    return await scan_emails_for_travel(db, user, query=body.query, page_size=body.page_size)
+
+
+@router.post("/approve-suggestion")
+async def api_approve_suggestion(
+    body: ApproveSuggestionRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or update a trip from an approved travel suggestion."""
+    try:
+        return await approve_travel_suggestion(db, user, body.suggestion.model_dump())
+    except TravelServiceError as e:
+        raise HTTPException(status_code=400, detail=str(e))

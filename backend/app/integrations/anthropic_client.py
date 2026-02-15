@@ -1,5 +1,7 @@
 """Claude AI integration for email analysis, categorization, and drafting."""
 
+import json
+
 import anthropic
 
 from app.core.config import settings
@@ -60,7 +62,6 @@ Body:
 
     # Parse the response - extract JSON from the text
     text = response.content[0].text
-    import json
 
     # Try to extract JSON from the response
     try:
@@ -147,3 +148,85 @@ Thread:
     )
 
     return response.content[0].text
+
+
+def _parse_json_response(text: str) -> dict | None:
+    """Extract JSON from an AI response, handling markdown code blocks."""
+    try:
+        if "```json" in text:
+            json_str = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            json_str = text.split("```")[1].split("```")[0].strip()
+        elif "{" in text:
+            start = text.index("{")
+            end = text.rindex("}") + 1
+            json_str = text[start:end]
+        else:
+            json_str = text
+        return json.loads(json_str)
+    except (json.JSONDecodeError, ValueError, IndexError):
+        return None
+
+
+async def extract_travel_from_email(
+    from_addr: str, subject: str, body: str, email_id: str, provider: str
+) -> dict | None:
+    """Extract travel information from an email using AI.
+
+    Returns a structured travel suggestion dict if the email is travel-related,
+    or None if it is not.
+    """
+    client = get_anthropic_client()
+
+    prompt = f"""Analyze this email and determine if it contains travel-related information
+(flight confirmation, hotel booking, car rental, train ticket, itinerary, boarding pass,
+travel cancellation, or schedule change).
+
+If the email is NOT travel-related, return exactly: {{"is_travel": false}}
+
+If the email IS travel-related, return a JSON object with these fields:
+- is_travel: true
+- trip_title: a short descriptive title for the trip (e.g., "Business Trip to New Delhi")
+- destination: the primary destination city/location
+- start_date: trip start date in ISO format (YYYY-MM-DD)
+- end_date: trip end date in ISO format (YYYY-MM-DD)
+- segments: an array of travel segments, each with:
+  - segment_type: one of "flight", "hotel", "car_rental", "train", "other"
+  - title: short description (e.g., "AI 302 DEL→BOM" or "Marriott Hotel Mumbai")
+  - start_time: ISO datetime (YYYY-MM-DDTHH:MM:SS) or empty string if unknown
+  - end_time: ISO datetime or empty string if unknown
+  - location_from: departure location or empty string
+  - location_to: arrival location or empty string
+  - confirmation_number: booking/PNR/confirmation number exactly as shown, or empty string
+  - carrier: airline/hotel chain/rental company name, or empty string
+  - cost: numeric cost or null if not mentioned
+  - currency: currency code (e.g., "USD", "INR") or "USD" as default
+- action_type: "new_trip" (for new bookings) or "update_trip" (for changes/cancellations)
+- notes: any additional relevant details (cancellation info, special requests, etc.)
+
+Email details:
+From: {from_addr}
+Subject: {subject}
+Body:
+{body[:3000]}
+
+Return ONLY the JSON object, no other text."""
+
+    response = await client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=800,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    result = _parse_json_response(response.content[0].text)
+    if not result or not result.get("is_travel"):
+        return None
+
+    # Attach email metadata for tracking
+    result["email_id"] = email_id
+    result["email_provider"] = provider
+    result["email_from"] = from_addr
+    result["email_subject"] = subject
+
+    return result

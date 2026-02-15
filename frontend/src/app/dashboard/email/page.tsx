@@ -30,6 +30,7 @@ export default function EmailPage() {
   const [query, setQuery] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [unreadCount, setUnreadCount] = useState(0);
+  const [providerErrors, setProviderErrors] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -58,6 +59,7 @@ export default function EmailPage() {
       );
       setEmails(data.emails);
       setUnreadCount(data.unread);
+      setProviderErrors(data.errors || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch emails");
     } finally {
@@ -272,6 +274,21 @@ export default function EmailPage() {
       {error && (
         <div className="rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-700 dark:text-red-400">
           {error}
+        </div>
+      )}
+
+      {providerErrors.length > 0 && (
+        <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 space-y-1">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            Provider Errors
+          </p>
+          {providerErrors.map((err, i) => (
+            <p key={i} className="text-sm text-amber-700 dark:text-amber-400">
+              {err.includes("403")
+                ? `${err.split(":")[0]}: Access denied — please ensure the Gmail API is enabled in your Google Cloud Console and the required scopes are authorized.`
+                : err}
+            </p>
+          ))}
         </div>
       )}
 

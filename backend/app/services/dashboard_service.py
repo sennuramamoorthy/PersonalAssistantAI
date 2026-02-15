@@ -26,7 +26,7 @@ async def get_dashboard_stats(db: AsyncSession, user: User) -> dict:
 
     # Email stats
     try:
-        inbox = await get_inbox(db, user, max_results=50)
+        inbox = await get_inbox(db, user, page_size=50)
         unread_count = sum(1 for e in inbox.get("emails", []) if e.get("is_unread"))
     except Exception:
         pass
@@ -76,7 +76,7 @@ async def get_pending_actions(db: AsyncSession, user: User) -> list[dict]:
 
     # Unread high-priority emails (just count for now)
     try:
-        inbox = await get_inbox(db, user, max_results=20)
+        inbox = await get_inbox(db, user, page_size=20)
         unread = [e for e in inbox.get("emails", []) if e.get("is_unread")]
         if unread:
             actions.append({
@@ -123,6 +123,30 @@ async def get_pending_actions(db: AsyncSession, user: User) -> list[dict]:
     except Exception:
         pass
 
+    # Travel-related emails (lightweight keyword check, no AI calls)
+    try:
+        travel_keywords = ["flight", "booking", "confirmation", "itinerary", "reservation", "hotel", "boarding"]
+        travel_inbox = await get_inbox(
+            db, user, query="flight OR hotel OR booking OR reservation", page_size=10
+        )
+        travel_emails = [
+            e for e in travel_inbox.get("emails", [])
+            if e.get("is_unread") and any(
+                kw in (e.get("subject", "") + " " + e.get("from", "")).lower()
+                for kw in travel_keywords
+            )
+        ]
+        if travel_emails:
+            actions.append({
+                "type": "travel",
+                "title": f"{len(travel_emails)} potential travel email{'s' if len(travel_emails) != 1 else ''}",
+                "description": "New travel-related emails detected. Scan to create trip plans.",
+                "action_url": "/dashboard/travel",
+                "priority": "normal",
+            })
+    except Exception:
+        pass
+
     # Sort by priority
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
     actions.sort(key=lambda a: priority_order.get(a.get("priority", "normal"), 2))
@@ -142,7 +166,7 @@ async def generate_ai_briefing(db: AsyncSession, user: User) -> str:
     trip_summary = ""
 
     try:
-        inbox = await get_inbox(db, user, max_results=10)
+        inbox = await get_inbox(db, user, page_size=10)
         emails = inbox.get("emails", [])
         unread = [e for e in emails if e.get("is_unread")]
         if unread:
@@ -173,6 +197,23 @@ async def generate_ai_briefing(db: AsyncSession, user: User) -> str:
     except Exception:
         pass
 
+    # Check for travel-related emails (lightweight keyword search)
+    travel_email_summary = ""
+    try:
+        travel_inbox = await get_inbox(
+            db, user, query="flight OR hotel OR booking OR reservation", page_size=5
+        )
+        travel_emails = [
+            e for e in travel_inbox.get("emails", [])
+            if any(kw in (e.get("subject", "") + " " + e.get("snippet", "")).lower()
+                   for kw in ["flight", "booking", "confirmation", "hotel", "itinerary", "reservation"])
+        ]
+        if travel_emails:
+            te_lines = [f"- From: {e.get('from', '?')} | {e.get('subject', '?')}" for e in travel_emails[:3]]
+            travel_email_summary = f"Travel-related emails detected ({len(travel_emails)}):\n" + "\n".join(te_lines)
+    except Exception:
+        pass
+
     # Generate briefing
     client = get_anthropic_client()
 
@@ -183,6 +224,8 @@ async def generate_ai_briefing(db: AsyncSession, user: User) -> str:
 {calendar_summary}
 
 {trip_summary if trip_summary else 'No upcoming trips.'}
+
+{travel_email_summary if travel_email_summary else ''}
 
 Provide:
 1. A warm greeting and date

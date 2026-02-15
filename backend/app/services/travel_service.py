@@ -1,5 +1,6 @@
-"""Travel service — trip CRUD, calendar blocking, AI itinerary assistance."""
+"""Travel service — trip CRUD, calendar blocking, AI itinerary assistance, email scanning."""
 
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.models.travel import Trip, TripSegment, TripDocument
 from app.models.user import User
 from app.services.calendar_service import create_event, get_events, CalendarServiceError
-from app.integrations.anthropic_client import get_anthropic_client, SYSTEM_PROMPT
+from app.integrations.anthropic_client import get_anthropic_client, SYSTEM_PROMPT, extract_travel_from_email
 
 
 class TravelServiceError(Exception):
@@ -76,7 +77,14 @@ async def create_trip(
     )
     db.add(trip)
     await db.commit()
-    await db.refresh(trip)
+
+    # Re-fetch with eager loading to avoid lazy-load in async context
+    result = await db.execute(
+        select(Trip)
+        .where(Trip.id == trip.id)
+        .options(selectinload(Trip.segments), selectinload(Trip.documents))
+    )
+    trip = result.scalar_one()
     return _serialize_trip(trip)
 
 
@@ -326,6 +334,185 @@ Provide:
     )
 
     return response.content[0].text
+
+
+# --- Email travel scanning ---
+
+TRAVEL_SEARCH_QUERY = "flight OR hotel OR booking OR reservation OR itinerary OR confirmation OR boarding pass OR travel OR trip"
+
+
+async def scan_emails_for_travel(
+    db: AsyncSession,
+    user: User,
+    query: str = "",
+    page_size: int = 30,
+) -> dict:
+    """Scan recent emails for travel content and return suggestions."""
+    from app.services.email_service import get_inbox
+
+    # Try travel-specific search first
+    search_query = query or TRAVEL_SEARCH_QUERY
+    inbox = await get_inbox(db, user, query=search_query, page_size=page_size)
+    emails = inbox.get("emails", [])
+
+    # Fallback: if travel search found nothing, scan all recent emails
+    if not emails and not query:
+        inbox = await get_inbox(db, user, page_size=page_size)
+        emails = inbox.get("emails", [])
+
+    if not emails:
+        return {"suggestions": [], "emails_scanned": 0, "travel_found": 0}
+
+    # Run AI extraction in parallel with concurrency limit
+    semaphore = asyncio.Semaphore(5)
+
+    async def _extract(email: dict) -> dict | None:
+        async with semaphore:
+            try:
+                return await extract_travel_from_email(
+                    from_addr=email.get("from", ""),
+                    subject=email.get("subject", ""),
+                    body=(email.get("body") or email.get("snippet", ""))[:3000],
+                    email_id=email.get("id", ""),
+                    provider=email.get("provider", ""),
+                )
+            except Exception:
+                return None
+
+    results = await asyncio.gather(*[_extract(e) for e in emails])
+
+    suggestions = []
+    for i, result in enumerate(results):
+        if result is None:
+            continue
+
+        # Add email date for display
+        result["email_date"] = emails[i].get("date", "")
+
+        # Deduplicate against existing trips
+        match = await _find_matching_trip(db, user, result)
+        if match:
+            result["action_type"] = "add_to_existing"
+            result["existing_trip_id"] = match["id"]
+            result["existing_trip_title"] = match["title"]
+        else:
+            result.setdefault("action_type", "new_trip")
+            result["existing_trip_id"] = None
+            result["existing_trip_title"] = None
+
+        suggestions.append(result)
+
+    return {
+        "suggestions": suggestions,
+        "emails_scanned": len(emails),
+        "travel_found": len(suggestions),
+    }
+
+
+async def _find_matching_trip(
+    db: AsyncSession, user: User, suggestion: dict
+) -> dict | None:
+    """Check if a suggestion matches an existing trip by confirmation number or date+destination."""
+    # 1. Match by confirmation number
+    suggestion_conf_numbers = [
+        seg.get("confirmation_number", "").strip()
+        for seg in suggestion.get("segments", [])
+        if seg.get("confirmation_number", "").strip()
+    ]
+
+    if suggestion_conf_numbers:
+        result = await db.execute(
+            select(Trip)
+            .join(TripSegment)
+            .where(
+                Trip.user_id == user.id,
+                TripSegment.confirmation_number.in_(suggestion_conf_numbers),
+            )
+            .options(selectinload(Trip.segments), selectinload(Trip.documents))
+        )
+        trip = result.scalar_one_or_none()
+        if trip:
+            return _serialize_trip(trip)
+
+    # 2. Match by date range + destination overlap
+    dest = suggestion.get("destination", "").lower()
+    start = suggestion.get("start_date", "")
+    end = suggestion.get("end_date", "")
+
+    if dest and start and end:
+        result = await db.execute(
+            select(Trip)
+            .where(
+                Trip.user_id == user.id,
+                Trip.status.in_(["upcoming", "in_progress"]),
+            )
+            .options(selectinload(Trip.segments), selectinload(Trip.documents))
+        )
+        trips = result.scalars().all()
+        for trip in trips:
+            # Check destination similarity (substring match)
+            trip_dest = (trip.destination or "").lower()
+            if dest in trip_dest or trip_dest in dest:
+                # Check date overlap
+                if trip.start_date and trip.end_date:
+                    if start <= trip.end_date and end >= trip.start_date:
+                        return _serialize_trip(trip)
+
+    return None
+
+
+async def approve_travel_suggestion(
+    db: AsyncSession,
+    user: User,
+    suggestion: dict,
+) -> dict:
+    """Create or update a trip from an approved travel suggestion."""
+    action = suggestion.get("action_type", "new_trip")
+
+    if action == "add_to_existing" and suggestion.get("existing_trip_id"):
+        trip_id = suggestion["existing_trip_id"]
+        # Verify trip exists
+        trip_data = await get_trip(db, user, trip_id)
+    else:
+        # Create new trip
+        trip_data = await create_trip(
+            db, user,
+            title=suggestion.get("trip_title", "Untitled Trip"),
+            destination=suggestion.get("destination", ""),
+            start_date=suggestion.get("start_date", ""),
+            end_date=suggestion.get("end_date", ""),
+            notes=suggestion.get("notes", ""),
+        )
+        trip_id = trip_data["id"]
+
+    # Add segments, skipping duplicates by confirmation number
+    existing_conf_numbers = {
+        seg["confirmation_number"]
+        for seg in trip_data.get("segments", [])
+        if seg.get("confirmation_number")
+    }
+
+    for seg in suggestion.get("segments", []):
+        conf = seg.get("confirmation_number", "").strip()
+        if conf and conf in existing_conf_numbers:
+            continue  # Skip duplicate
+
+        await add_segment(
+            db, user, trip_id,
+            segment_type=seg.get("segment_type", "other"),
+            title=seg.get("title", ""),
+            start_time=seg.get("start_time", ""),
+            end_time=seg.get("end_time", ""),
+            location_from=seg.get("location_from", ""),
+            location_to=seg.get("location_to", ""),
+            confirmation_number=conf,
+            carrier=seg.get("carrier", ""),
+            cost=seg.get("cost"),
+            currency=seg.get("currency", "USD"),
+        )
+
+    # Return the full updated trip
+    return await get_trip(db, user, trip_id)
 
 
 # --- Serializers ---
