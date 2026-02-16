@@ -35,3 +35,16 @@ export interface EmailCategorization {
 export interface DraftResponse {
   draft: string;
 }
+
+export interface SendEmailRequest {
+  provider: "google" | "microsoft";
+  to: string;
+  subject: string;
+  body: string;
+  reply_to_id?: string;
+}
+
+export interface SendEmailResponse {
+  status: string;
+  result: Record<string, unknown>;
+}

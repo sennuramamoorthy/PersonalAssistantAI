@@ -11,11 +11,17 @@ import {
   Settings,
   Inbox,
   Filter,
+  Send,
+  Plus,
+  X,
+  Reply,
+  CheckCircle,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { apiFetch } from "@/lib/api";
-import type { Email, InboxResponse } from "@/types/email";
+import type { Email, InboxResponse, SendEmailResponse } from "@/types/email";
 
 type ProviderFilter = "all" | "google" | "microsoft";
 
@@ -41,6 +47,24 @@ export default function EmailPage() {
   const [aiLoading, setAiLoading] = useState(false);
   const [draftInstruction, setDraftInstruction] = useState("");
   const [showDraft, setShowDraft] = useState(false);
+
+  // Reply state
+  const [replyMode, setReplyMode] = useState(false);
+  const [replyBody, setReplyBody] = useState("");
+  const [sendLoading, setSendLoading] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendSuccess, setSendSuccess] = useState(false);
+
+  // Compose modal state
+  const [showCompose, setShowCompose] = useState(false);
+  const [composeForm, setComposeForm] = useState({
+    to: "",
+    subject: "",
+    body: "",
+    provider: "" as "google" | "microsoft",
+  });
+  const [composeLoading, setComposeLoading] = useState(false);
+  const [composeError, setComposeError] = useState<string | null>(null);
 
   const isConnected = user?.google_connected || user?.microsoft_connected;
 
@@ -77,6 +101,10 @@ export default function EmailPage() {
     setCategorization(null);
     setAiDraft(null);
     setShowDraft(false);
+    setReplyMode(false);
+    setReplyBody("");
+    setSendError(null);
+    setSendSuccess(false);
     setDetailLoading(true);
 
     try {
@@ -143,6 +171,8 @@ export default function EmailPage() {
         }),
       });
       setAiDraft(result.draft);
+      setReplyBody(result.draft);
+      setReplyMode(true);
     } catch {
       setAiDraft("Failed to generate draft. Please try again.");
     } finally {
@@ -164,6 +194,70 @@ export default function EmailPage() {
       }
     } catch {
       // ignore
+    }
+  }
+
+  async function handleSendReply() {
+    if (!selectedEmail || !replyBody.trim()) return;
+    setSendLoading(true);
+    setSendError(null);
+    try {
+      await apiFetch<SendEmailResponse>("/api/email/send", {
+        method: "POST",
+        token: accessToken || undefined,
+        body: JSON.stringify({
+          provider: selectedEmail.provider,
+          to: selectedEmail.from,
+          subject: selectedEmail.subject.startsWith("Re:")
+            ? selectedEmail.subject
+            : `Re: ${selectedEmail.subject}`,
+          body: replyBody,
+          reply_to_id: selectedEmail.id,
+        }),
+      });
+      setSendSuccess(true);
+      setReplyBody("");
+      setReplyMode(false);
+      setAiDraft(null);
+      setShowDraft(false);
+      setTimeout(() => setSendSuccess(false), 3000);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send reply");
+    } finally {
+      setSendLoading(false);
+    }
+  }
+
+  async function handleSendCompose() {
+    if (!composeForm.to.trim() || !composeForm.subject.trim() || !composeForm.body.trim()) {
+      setComposeError("Please fill in all fields");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(composeForm.to.trim())) {
+      setComposeError("Please enter a valid email address");
+      return;
+    }
+    setComposeLoading(true);
+    setComposeError(null);
+    try {
+      await apiFetch<SendEmailResponse>("/api/email/send", {
+        method: "POST",
+        token: accessToken || undefined,
+        body: JSON.stringify({
+          provider: composeForm.provider,
+          to: composeForm.to.trim(),
+          subject: composeForm.subject.trim(),
+          body: composeForm.body.trim(),
+        }),
+      });
+      setShowCompose(false);
+      setComposeForm({ to: "", subject: "", body: "", provider: composeForm.provider });
+      setSendSuccess(true);
+      setTimeout(() => setSendSuccess(false), 3000);
+    } catch (err) {
+      setComposeError(err instanceof Error ? err.message : "Failed to send email");
+    } finally {
+      setComposeLoading(false);
     }
   }
 
@@ -226,18 +320,39 @@ export default function EmailPage() {
             {unreadCount > 0 ? `${unreadCount} unread` : "All caught up"}
           </p>
         </div>
-        <button
-          onClick={fetchInbox}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
-        >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              const defaultProvider = user?.google_connected
+                ? "google"
+                : "microsoft";
+              setComposeForm({
+                to: "",
+                subject: "",
+                body: "",
+                provider: defaultProvider as "google" | "microsoft",
+              });
+              setComposeError(null);
+              setShowCompose(true);
+            }}
+            className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"
+          >
+            <Plus className="h-4 w-4" />
+            Compose
+          </button>
+          <button
+            onClick={fetchInbox}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Search & Filter Bar */}
@@ -421,20 +536,33 @@ export default function EmailPage() {
 
                   <div className="flex flex-wrap gap-2">
                     <button
+                      onClick={() => {
+                        setReplyMode(true);
+                        setReplyBody("");
+                        setSendError(null);
+                        setShowDraft(false);
+                        setAiDraft(null);
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"
+                    >
+                      <Reply className="h-3.5 w-3.5" />
+                      Reply
+                    </button>
+                    <button
+                      onClick={handleDraft}
+                      disabled={aiLoading}
+                      className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      AI Draft Reply
+                    </button>
+                    <button
                       onClick={handleCategorize}
                       disabled={aiLoading}
                       className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
                     >
                       <Filter className="h-3.5 w-3.5" />
                       Categorize
-                    </button>
-                    <button
-                      onClick={handleDraft}
-                      disabled={aiLoading}
-                      className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
-                    >
-                      <Mail className="h-3.5 w-3.5" />
-                      Draft Reply
                     </button>
                     <button
                       onClick={() => handleArchive(selectedEmail)}
@@ -510,24 +638,110 @@ export default function EmailPage() {
                   {/* AI Draft */}
                   {showDraft && aiDraft && (
                     <div className="rounded-lg border border-[var(--border)] p-4 space-y-3">
-                      <h4 className="text-sm font-medium text-[var(--foreground)]">
-                        AI Draft Reply
-                      </h4>
-                      <div className="bg-[var(--muted)] rounded-lg p-3 text-sm whitespace-pre-wrap">
-                        {aiDraft}
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-medium text-[var(--foreground)]">
+                          AI Draft Reply
+                        </h4>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          To: {selectedEmail?.from}
+                        </p>
                       </div>
+                      <textarea
+                        value={replyBody}
+                        onChange={(e) => setReplyBody(e.target.value)}
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm leading-relaxed text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-y min-h-[400px]"
+                      />
+                      {sendError && (
+                        <p className="text-sm text-red-600">{sendError}</p>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          Edit the draft above, then click Send Reply.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleDraft}
+                            disabled={aiLoading}
+                            className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
+                          >
+                            Regenerate
+                          </button>
+                          <button
+                            onClick={handleSendReply}
+                            disabled={sendLoading || !replyBody.trim()}
+                            className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                          >
+                            {sendLoading ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Send className="h-3.5 w-3.5" />
+                            )}
+                            Send Reply
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manual Reply (without AI draft) */}
+                  {replyMode && !showDraft && (
+                    <div className="rounded-lg border border-[var(--border)] p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-medium text-[var(--foreground)]">
+                          Reply
+                        </h4>
+                        <p className="text-xs text-[var(--muted-foreground)]">
+                          To: {selectedEmail?.from}
+                        </p>
+                      </div>
+                      <textarea
+                        value={replyBody}
+                        onChange={(e) => setReplyBody(e.target.value)}
+                        placeholder="Type your reply..."
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm leading-relaxed text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-y min-h-[400px]"
+                      />
+                      {sendError && (
+                        <p className="text-sm text-red-600">{sendError}</p>
+                      )}
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setReplyMode(false);
+                            setReplyBody("");
+                          }}
+                          className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--accent)] transition-colors"
+                        >
+                          Cancel
+                        </button>
                         <button
                           onClick={handleDraft}
                           disabled={aiLoading}
-                          className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
                         >
-                          Regenerate
+                          <Sparkles className="h-3.5 w-3.5" />
+                          Use AI Draft
+                        </button>
+                        <button
+                          onClick={handleSendReply}
+                          disabled={sendLoading || !replyBody.trim()}
+                          className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-sm text-[var(--primary-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                        >
+                          {sendLoading ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Send className="h-3.5 w-3.5" />
+                          )}
+                          Send Reply
                         </button>
                       </div>
-                      <p className="text-xs text-[var(--muted-foreground)]">
-                        Review and edit the draft before sending. The AI draft requires your approval.
-                      </p>
+                    </div>
+                  )}
+
+                  {/* Send Success */}
+                  {sendSuccess && (
+                    <div className="rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 px-4 py-2.5 flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                      <p className="text-sm text-green-700 dark:text-green-400">Email sent successfully</p>
                     </div>
                   )}
                 </div>
@@ -536,6 +750,134 @@ export default function EmailPage() {
           </div>
         )}
       </div>
+
+      {/* Compose Email Modal */}
+      {showCompose && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowCompose(false)}
+          />
+          <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--background)] shadow-xl mx-4">
+            <div className="p-6 space-y-5">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-[var(--foreground)]">
+                  Compose Email
+                </h2>
+                <button
+                  onClick={() => setShowCompose(false)}
+                  className="p-1 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {composeError && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-2.5">
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    {composeError}
+                  </p>
+                </div>
+              )}
+
+              {/* Send from */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">
+                  Send from
+                </label>
+                <select
+                  value={composeForm.provider}
+                  onChange={(e) =>
+                    setComposeForm((f) => ({
+                      ...f,
+                      provider: e.target.value as "google" | "microsoft",
+                    }))
+                  }
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                >
+                  {user?.google_connected && (
+                    <option value="google">Gmail</option>
+                  )}
+                  {user?.microsoft_connected && (
+                    <option value="microsoft">Outlook</option>
+                  )}
+                </select>
+              </div>
+
+              {/* To */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">
+                  To <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={composeForm.to}
+                  onChange={(e) =>
+                    setComposeForm((f) => ({ ...f, to: e.target.value }))
+                  }
+                  placeholder="recipient@example.com"
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
+              </div>
+
+              {/* Subject */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">
+                  Subject <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={composeForm.subject}
+                  onChange={(e) =>
+                    setComposeForm((f) => ({ ...f, subject: e.target.value }))
+                  }
+                  placeholder="Email subject"
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
+              </div>
+
+              {/* Body */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">
+                  Message <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  value={composeForm.body}
+                  onChange={(e) =>
+                    setComposeForm((f) => ({ ...f, body: e.target.value }))
+                  }
+                  placeholder="Write your message..."
+                  rows={8}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] resize-y"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-2 border-t border-[var(--border)]">
+                <button
+                  onClick={() => setShowCompose(false)}
+                  className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm hover:bg-[var(--accent)] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSendCompose}
+                  disabled={composeLoading}
+                  className="flex items-center gap-2 rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  {composeLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  Send Email
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
