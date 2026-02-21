@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -30,9 +30,15 @@ const navigation = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const user = useAuthStore((s) => s.user);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const handleLogout = () => {
+    clearAuth();
+    router.push("/login");
+  };
 
   const sidebarContent = (
     <div className="flex h-full flex-col">
@@ -91,7 +97,7 @@ export function Sidebar() {
             </p>
           </div>
           <button
-            onClick={clearAuth}
+            onClick={handleLogout}
             className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
             title="Sign out"
           >

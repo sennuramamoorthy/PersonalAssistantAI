@@ -65,6 +65,7 @@ export default function EmailPage() {
   });
   const [composeLoading, setComposeLoading] = useState(false);
   const [composeError, setComposeError] = useState<string | null>(null);
+  const [enhanceLoading, setEnhanceLoading] = useState(false);
 
   const isConnected = user?.google_connected || user?.microsoft_connected;
 
@@ -258,6 +259,28 @@ export default function EmailPage() {
       setComposeError(err instanceof Error ? err.message : "Failed to send email");
     } finally {
       setComposeLoading(false);
+    }
+  }
+
+  async function handleEnhanceCompose() {
+    if (!composeForm.body.trim()) return;
+    setEnhanceLoading(true);
+    setComposeError(null);
+    try {
+      const result = await apiFetch<{ enhanced: string }>("/api/email/enhance", {
+        method: "POST",
+        token: accessToken || undefined,
+        body: JSON.stringify({
+          text: composeForm.body,
+          subject: composeForm.subject,
+          to: composeForm.to,
+        }),
+      });
+      setComposeForm((f) => ({ ...f, body: result.enhanced }));
+    } catch (err) {
+      setComposeError(err instanceof Error ? err.message : "Failed to enhance message");
+    } finally {
+      setEnhanceLoading(false);
     }
   }
 
@@ -854,7 +877,20 @@ export default function EmailPage() {
               </div>
 
               {/* Actions */}
-              <div className="flex justify-end gap-3 pt-2 border-t border-[var(--border)]">
+              <div className="flex items-center justify-between pt-2 border-t border-[var(--border)]">
+                <button
+                  onClick={handleEnhanceCompose}
+                  disabled={enhanceLoading || !composeForm.body.trim()}
+                  className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-[var(--accent)] transition-colors disabled:opacity-50"
+                >
+                  {enhanceLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  Enhance with AI
+                </button>
+                <div className="flex gap-3">
                 <button
                   onClick={() => setShowCompose(false)}
                   className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm hover:bg-[var(--accent)] transition-colors"
@@ -873,6 +909,7 @@ export default function EmailPage() {
                   )}
                   Send Email
                 </button>
+                </div>
               </div>
             </div>
           </div>

@@ -24,7 +24,7 @@ AI-powered personal assistant for a Chairman managing multiple colleges and a un
 | Email | Gmail API, Microsoft Graph API |
 | Calendar | Google Calendar API, Microsoft Graph API |
 | Auth | JWT (access + refresh tokens), OAuth2 (Google, Microsoft) |
-| Deployment | Docker Compose with Nginx reverse proxy |
+| Deployment | Docker Compose |
 
 ## Getting Started
 
@@ -137,7 +137,7 @@ PersonalAssistantAI/
 │   ├── alembic/               # Database migrations
 │   └── tests/
 │
-├── docker/                    # Dockerfiles and Nginx config
+├── docker/                    # Dockerfiles
 ├── docker-compose.yml
 └── .env.example               # Environment variable template
 ```
@@ -233,7 +233,7 @@ The remaining values (`DATABASE_URL`, `REDIS_URL`, ports, etc.) have working def
 docker compose up -d --build
 ```
 
-This builds and starts 5 containers:
+This builds and starts 4 containers:
 
 | Container | Port | Description |
 |---|---|---|
@@ -241,7 +241,6 @@ This builds and starts 5 containers:
 | **redis** | 6379 | Redis 7 cache |
 | **backend** | 8000 | FastAPI REST API |
 | **frontend** | 3000 | Next.js web application |
-| **nginx** | 80 | Reverse proxy |
 
 Wait for all containers to be healthy:
 
@@ -319,7 +318,7 @@ docker compose exec db psql -U assistant -d assistant
 |---|---|
 | Containers fail to start | Run `docker compose logs` to check error output |
 | Database connection errors | Wait 10 seconds for PostgreSQL health check, then retry |
-| Port 3000/8000/80 already in use | Stop other services on those ports, or change ports in `docker-compose.yml` |
+| Port 3000/8000 already in use | Stop other services on those ports, or change ports in `docker-compose.yml` |
 | Gmail API 403 error | Enable Gmail API and Calendar API in your Google Cloud Console |
 | OAuth redirect mismatch | Add `http://localhost:8000/api/auth/google/callback` to your Google OAuth authorized redirect URIs |
 | Frontend shows blank page | Check `docker compose logs frontend` for build errors |

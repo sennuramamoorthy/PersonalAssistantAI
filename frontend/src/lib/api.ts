@@ -1,3 +1,5 @@
+import { useAuthStore } from "@/stores/auth-store";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface FetchOptions extends RequestInit {
@@ -29,6 +31,15 @@ export async function apiFetch<T>(
   });
 
   if (!response.ok) {
+    // Session expired — clear auth and redirect to login
+    if (response.status === 401) {
+      useAuthStore.getState().clearAuth();
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
+      throw new ApiError(401, "Session expired. Redirecting to login...");
+    }
+
     const error = await response.json().catch(() => ({ detail: "Request failed" }));
     throw new ApiError(response.status, error.detail || "Request failed");
   }

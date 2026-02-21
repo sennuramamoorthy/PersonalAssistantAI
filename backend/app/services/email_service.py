@@ -18,7 +18,7 @@ from app.integrations.microsoft_graph import (
     parse_outlook_message,
     refresh_microsoft_token,
 )
-from app.integrations.anthropic_client import categorize_email, draft_reply
+from app.integrations.anthropic_client import categorize_email, draft_reply, enhance_message
 
 
 class EmailServiceError(Exception):
@@ -178,6 +178,16 @@ async def ai_draft_response(
 ) -> str:
     """Use AI to draft a reply."""
     return await draft_reply(from_addr, subject, body, sender_type, instruction)
+
+
+async def ai_enhance_message(
+    text: str,
+    subject: str = "",
+    to: str = "",
+    instruction: str = "",
+) -> str:
+    """Use AI to enhance/polish an email message."""
+    return await enhance_message(text, subject, to, instruction)
 
 
 async def send_reply(

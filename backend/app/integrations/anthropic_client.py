@@ -160,6 +160,43 @@ Write ONLY the reply body text. Do not include subject line, greetings preamble 
     return response.content[0].text
 
 
+async def enhance_message(
+    text: str,
+    subject: str = "",
+    to: str = "",
+    instruction: str = "",
+) -> str:
+    """Enhance/polish an email message using AI."""
+    client = get_anthropic_client()
+
+    context_parts = []
+    if to:
+        context_parts.append(f"Recipient: {to}")
+    if subject:
+        context_parts.append(f"Subject: {subject}")
+    context = "\n".join(context_parts)
+    context_block = f"\n\nContext:\n{context}" if context else ""
+
+    extra = f"\n\nAdditional instruction from the Chairman: {instruction}" if instruction else ""
+
+    prompt = f"""Enhance the following email message written by the Chairman. Improve the tone, clarity, grammar, and professionalism while preserving the original intent and meaning. Keep the same overall structure and key points.
+{context_block}
+
+Original message:
+{text[:3000]}{extra}
+
+Write ONLY the enhanced message body. Do not include subject line, meta-commentary like "Here's the enhanced version", or any explanation. Start directly with the message content."""
+
+    response = await client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    return response.content[0].text
+
+
 async def summarize_thread(messages: list[dict]) -> str:
     """Summarize an email thread."""
     client = get_anthropic_client()

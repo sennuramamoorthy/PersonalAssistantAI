@@ -12,6 +12,7 @@ from app.services.email_service import (
     get_email_detail,
     ai_categorize,
     ai_draft_response,
+    ai_enhance_message,
     send_reply,
     mark_as_read,
     archive_email,
@@ -37,6 +38,13 @@ class SendRequest(BaseModel):
     subject: str
     body: str
     reply_to_id: str | None = None
+
+
+class EnhanceRequest(BaseModel):
+    text: str
+    subject: str = ""
+    to: str = ""
+    instruction: str = ""
 
 
 class ActionRequest(BaseModel):
@@ -95,6 +103,20 @@ async def api_draft_reply(
         body.from_addr, body.subject, body.body, body.sender_type, body.instruction
     )
     return {"draft": draft}
+
+
+@router.post("/enhance")
+async def api_enhance_message(
+    body: EnhanceRequest,
+    user: User = Depends(get_current_user),
+):
+    """Use AI to enhance/polish an email message."""
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Message text is required")
+    enhanced = await ai_enhance_message(
+        body.text, body.subject, body.to, body.instruction
+    )
+    return {"enhanced": enhanced}
 
 
 @router.post("/send")
