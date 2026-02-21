@@ -9,6 +9,7 @@ import {
   Calendar,
   Users,
   Plane,
+  CheckSquare,
   Sparkles,
   Loader2,
   AlertCircle,
@@ -21,6 +22,7 @@ interface DashboardStats {
   todays_meetings: number;
   weeks_events: number;
   upcoming_trips: number;
+  pending_tasks: number;
 }
 
 interface PendingAction {
@@ -36,6 +38,7 @@ const STAT_CONFIG = [
   { key: "todays_meetings", name: "Today's Meetings", icon: Users, color: "text-green-500", bg: "bg-green-50 dark:bg-green-900/20", href: "/dashboard/meetings" },
   { key: "weeks_events", name: "This Week's Events", icon: Calendar, color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-900/20", href: "/dashboard/calendar" },
   { key: "upcoming_trips", name: "Upcoming Trips", icon: Plane, color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-900/20", href: "/dashboard/travel" },
+  { key: "pending_tasks", name: "Pending Tasks", icon: CheckSquare, color: "text-teal-500", bg: "bg-teal-50 dark:bg-teal-900/20", href: "/dashboard/tasks" },
 ] as const;
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -139,7 +142,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {STAT_CONFIG.map((stat) => {
           const value = stats ? stats[stat.key as keyof DashboardStats] : null;
           return (
@@ -264,7 +267,7 @@ export default function DashboardPage() {
       {/* Quick Links */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-6 shadow-sm">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Quick Actions</h2>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <button
             onClick={() => router.push("/dashboard/email")}
             className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
@@ -292,6 +295,13 @@ export default function DashboardPage() {
           >
             <Plane className="h-4 w-4 text-orange-500" />
             Travel Plans
+          </button>
+          <button
+            onClick={() => router.push("/dashboard/tasks")}
+            className="flex items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--foreground)] hover:bg-[var(--accent)] transition-colors"
+          >
+            <CheckSquare className="h-4 w-4 text-teal-500" />
+            View Tasks
           </button>
         </div>
       </div>

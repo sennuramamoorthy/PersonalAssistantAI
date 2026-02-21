@@ -9,6 +9,7 @@ import {
   Calendar,
   Users,
   Plane,
+  CheckSquare,
   MessageSquare,
   Settings,
   LogOut,
@@ -24,6 +25,7 @@ const navigation = [
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
   { name: "Meetings", href: "/dashboard/meetings", icon: Users },
   { name: "Travel", href: "/dashboard/travel", icon: Plane },
+  { name: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
   { name: "Chat", href: "/dashboard/chat", icon: MessageSquare },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];

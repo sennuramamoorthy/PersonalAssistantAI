@@ -305,3 +305,58 @@ Return ONLY the JSON object, no other text."""
     result["email_subject"] = subject
 
     return result
+
+
+async def extract_tasks_from_email(
+    from_addr: str, subject: str, body: str, date: str = ""
+) -> list[dict] | None:
+    """Extract action items / tasks from an email using AI.
+
+    Returns a list of task dicts if actionable items are found,
+    or None if the email contains no action items.
+    """
+    client = get_anthropic_client()
+
+    prompt = f"""Analyze this email and determine if it contains any action items or tasks
+that the Chairman needs to act on, follow up on, delegate, or track.
+
+If the email is purely informational (newsletters, automated notifications, receipts,
+general FYI messages) with NO action items, return exactly: {{"has_tasks": false}}
+
+If the email DOES contain action items, return a JSON object with:
+- has_tasks: true
+- tasks: an array of task objects, each with:
+  - title: a concise action item title (imperative form, e.g., "Review budget proposal")
+  - description: brief context about what needs to be done (1-2 sentences)
+  - priority: one of "urgent", "high", "normal", "low" based on the language and context
+  - suggested_due_date: ISO date (YYYY-MM-DD) if a deadline is mentioned or implied, or null
+
+Only extract genuine action items that require the Chairman's attention or action.
+Do NOT create tasks for:
+- General information or news
+- Automated notifications (password resets, system alerts)
+- Marketing or promotional emails
+- Simple acknowledgments or thank-you emails
+- Read receipts or delivery confirmations
+
+Email details:
+From: {from_addr}
+Subject: {subject}
+Date: {date}
+Body:
+{body[:3000]}
+
+Return ONLY the JSON object, no other text."""
+
+    response = await client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=600,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    result = _parse_json_response(response.content[0].text)
+    if not result or not result.get("has_tasks"):
+        return None
+
+    return result.get("tasks", [])

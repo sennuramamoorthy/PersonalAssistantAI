@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 
 from app.models.user import User
 from app.models.travel import Trip
+from app.models.task import Task
 from app.services.email_service import get_inbox
 from app.services.calendar_service import get_events, detect_conflicts
 from app.integrations.anthropic_client import get_anthropic_client, SYSTEM_PROMPT
@@ -59,11 +60,24 @@ async def get_dashboard_stats(db: AsyncSession, user: User) -> dict:
     except Exception:
         pass
 
+    # Pending tasks
+    pending_tasks = 0
+    try:
+        result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.user_id == user.id, Task.status == "pending"
+            )
+        )
+        pending_tasks = result.scalar() or 0
+    except Exception:
+        pass
+
     return {
         "unread_emails": unread_count,
         "todays_meetings": todays_meetings,
         "weeks_events": weeks_events,
         "upcoming_trips": upcoming_trips,
+        "pending_tasks": pending_tasks,
     }
 
 
@@ -147,6 +161,27 @@ async def get_pending_actions(db: AsyncSession, user: User) -> list[dict]:
     except Exception:
         pass
 
+    # Pending tasks (urgent or high priority)
+    try:
+        result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.user_id == user.id,
+                Task.status == "pending",
+                Task.priority.in_(["urgent", "high"]),
+            )
+        )
+        high_priority_tasks = result.scalar() or 0
+        if high_priority_tasks:
+            actions.append({
+                "type": "task",
+                "title": f"{high_priority_tasks} high-priority task{'s' if high_priority_tasks != 1 else ''}",
+                "description": "You have urgent or high-priority tasks awaiting action.",
+                "action_url": "/dashboard/tasks",
+                "priority": "high",
+            })
+    except Exception:
+        pass
+
     # Sort by priority
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
     actions.sort(key=lambda a: priority_order.get(a.get("priority", "normal"), 2))
@@ -214,6 +249,24 @@ async def generate_ai_briefing(db: AsyncSession, user: User) -> str:
     except Exception:
         pass
 
+    # Pending tasks
+    task_summary = ""
+    try:
+        result = await db.execute(
+            select(Task).where(
+                Task.user_id == user.id, Task.status.in_(["pending", "in_progress"])
+            ).limit(5)
+        )
+        pending_tasks = result.scalars().all()
+        if pending_tasks:
+            task_lines = [
+                f"- [{t.priority.upper()}] {t.title}" + (f" (due {t.due_date})" if t.due_date else "")
+                for t in pending_tasks
+            ]
+            task_summary = f"Pending tasks ({len(pending_tasks)}):\n" + "\n".join(task_lines)
+    except Exception:
+        pass
+
     # Generate briefing
     client = get_anthropic_client()
 
@@ -224,6 +277,8 @@ async def generate_ai_briefing(db: AsyncSession, user: User) -> str:
 {calendar_summary}
 
 {trip_summary if trip_summary else 'No upcoming trips.'}
+
+{task_summary if task_summary else ''}
 
 {travel_email_summary if travel_email_summary else ''}
 
